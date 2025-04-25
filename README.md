@@ -1,11 +1,6 @@
-# Mari0-vita
+# CelLua-vita
 Runs on LÖVE-vita 11.4
 
-Port of [Mari0](https://stabyourself.net/mari0/) to PSVita.
-
-Known issues:
-* Netplay doesn't work
-* Downloading mappacks doesn't work
-* Editor disabled
+Port of [CelLua](https://discord.com/invite/cellua-machine-server-866250603508662313) to PSVita.
 
 MIT License
