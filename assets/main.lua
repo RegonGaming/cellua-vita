@@ -5,6 +5,323 @@ if not success then error("No utf8 library. Are you on the latest version of LOV
 ip = require "interpolation"
 getsplash = require "splashes"
 
+
+unpack = unpack or table.unpack
+
+love.graphics.newText = nil -- recreate love potion environment
+love.graphics.newParticleSystem = nil
+
+local function decolorText(clrtext)
+	local dec = {}
+	
+	for i = 1,math.floor(#clrtext/2) do
+		dec[#dec + 1] = clrtext[i*2] or ""
+	end
+		
+	return table.concat(dec)
+end
+
+local function lineCount(str)
+	local _, c = str:gsub("\n", "")
+	
+	return c + 1
+end
+
+local function isWhitespace(char)
+	return char == " " or char == "\t"
+end
+
+local function lineCountLimited(str,limit,font)
+
+	font = font or love.graphics.getFont()
+	
+	if not limit then return lineCount(str) end
+	
+	local x = 0
+	local i = 1
+	local l = 1
+	
+	local lastwhitespacei
+	
+	while i <= utf8.len(str) do
+		local ch = str:sub(utf8.offset(str,i), (i >= utf8.len(str)) and #str or (utf8.offset(str,i+1)-1))
+		
+		if ch == "\n" then
+			x = 0
+			l = l + 1
+		else
+		
+			x = x + font:getWidth(ch)
+			
+			if x > limit then
+				
+				if lastwhitespacei then -- hasn't been whitespace. just give up. i don't even know how to properly handle this.
+					
+					x = 0
+					l = l + 1
+				
+				else
+					
+					x = 0
+					l = l + 1
+					i = lastwhitespacei
+				
+				end
+				
+			else
+			
+				if isWhitespace(ch) then
+					
+					lastwhitespacei = i
+					
+				end
+				
+			end
+		
+		end
+	
+		i = i + 1
+	end
+	
+	return l
+end
+
+local textFuncs = {
+	setf = function(self,txt,limit,align)
+		self.txt = txt
+		self.limit = limit
+		self.align = align
+	end,
+	getWidth = function(self)
+		local font = self.font or love.graphics.getFont()
+		
+		local txt = decolorText(self.txt or {})
+		
+		return font:getWidth(txt) or 0
+	end,
+	getHeight = function(self)
+		local font = self.font or love.graphics.getFont()
+		local txt = decolorText(self.txt or {})
+		local ln = lineCountLimited(txt, self.limit, self.font)
+		
+		return (font:getHeight() or 0) * ln
+	end,
+	release = function(self)
+		self.txt = nil
+		self.limit = nil
+		self.font = nil
+		self.align = nil
+		self.textobj = nil
+		setmetatable(self,{})
+	end
+}
+
+function love.graphics.newText(...)
+-- print("newtext")
+	local args = {...}
+	if #args == 1 then
+		return setmetatable({textobj = true, font = select(1,...)}, {__index = textFuncs})
+	end
+end
+
+local psFunctions = {
+	setSizes = function(self,s1,s2,s3,s4,s5,s6,s7,s8)
+		self.sizes = {s1,s2,s3,s4,s5,s6,s7,s8}
+	end,
+	getSizes = function(self)
+		local s = self.sizes	
+		return s[1],s[2],s[3],s[4],s[5],s[6],s[7],s[8]
+	end,
+	setSpeed = function(self, min, max)
+		self.speed = {min, max or min}
+	end,
+	getSpeed = function(self)
+		return self.speed[1],self.speed[2]
+	end,
+	setSpread = function(self,spread)
+		self.spread = spread
+	end,
+	getSpread = function(self)
+		return self.spread
+	end,
+	setParticleLifetime = function(self, min,max)
+		self.lifetime = {min, max or min}
+	end,
+	getParticleLifetime = function(self)
+		return self.lifetime[1],self.lifetime[2]
+	end,
+	setEmissionArea = function(self, dist, dx,dy,ang,relToCenter)
+		self.area = {dist, dx,dy,ang,relToCenter or false}
+	end,
+	getEmissionArea = function(self)
+		return self.area[1], self.area[2], self.area[3], self.area[4], self.area[5] or false
+	end,
+	setSizeVariation = function(self, var)
+		self.svar = var
+	end,
+	getSizeVariation = function(self)
+		return self.svar
+	end,
+	setLinearDamping = function(self, min, max)
+		self.damping = {min, max or min}
+	end,
+	getLinearDamping = function(self)
+		return self.damping[1], self.damping[2]
+	end,
+	setBufferSize = function(self, size)
+		self.bufsize = size
+	end,
+	getBufferSize = function(self)
+		return self.bufsize
+	end,
+	setColors = function(self, ...) -- here i completely assume the values passed are valid cause i'm pretty sure cellua wouldn't
+	                                -- call the function with invalid args
+		local vals = {...}
+		self.colors = vals;
+	end,
+	getColors = function(self)
+		return unpack(self.colors)
+	end,
+	setPosition = function(self, x,y)
+		self.position = {x,y}
+	end,
+	getPosition = function(self)
+		return self.position[1], self.position[2]
+	end,
+	update = function(self, dt)
+		for i = #self.parts,1,-1 do
+			local p = self.parts[i]
+			
+			p.x = p.x + math.cos(p.speedang)*p.speed*dt
+			p.y = p.y + math.sin(p.speedang)*p.speed*dt
+			
+			p.time = p.time + dt
+			
+			if p.time > p.lifetime then
+				table.remove(self.parts,i)
+			end
+			
+			p.vx = p.speed - p.damping*dt
+			if p.speed < 0 then p.speed = 0 end
+		end
+	end,
+	emit = function(self, num)
+		for i = 1,num do
+			if #self.parts >= self.bufsize then
+				break
+			end
+			
+			local mind,maxd = self.damping[1], self.damping[2]
+			local damping = love.math.random()*(maxd-mind)+mind
+			local minl, maxl = self.lifetime[1], self.lifetime[2]
+			local lifetime = love.math.random()*(maxl-minl)+minl
+			local mins,maxs = self.speed[1], self.speed[2]
+			local speedang = love.math.random()*self.spread
+			local speed = love.math.random()*(maxs-mins) + mins
+			local distr, dx, dy, angle, relativeToCenter = self.area[1], self.area[2], self.area[3], self.area[4], self.area[5]
+			if distr ~= "uniform" then error("particle distribution " .. tostring(distr) .. " not implemented") end
+			assert(angle == nil, "cellua never defines angle range in distribution in particles and idek how it works so i'm not implementing it.")
+			self.parts[#self.parts+1] = {
+				time = 0,
+				x = ((love.math.random()*2)-1)*dx + self.position[1],
+				y = ((love.math.random()*2)-1)*dy + self.position[2],
+				speed = speed,
+				speedang = speedang,
+				size = 1-love.math.random()*self.svar, -- i think that'll workkkk
+				damping = damping,
+				lifetime = lifetime,
+			}
+		end
+	end,
+}
+
+local function renderPartSystem(sys,x,y,r,sx,sy,ox,oy)
+	ox = ox or 0
+	oy = oy or 0
+	sx = sx or 1
+	sy = sy or 1
+	for i = 1,#sys.parts do
+		local p = sys.parts[i]
+		
+		local lifetimePart = p.time / p.lifetime
+		
+		local sizecount = #sys.sizes
+		local ltSize = lifetimePart*(sizecount - 1) + 1
+		local lerpvSize = ltSize % 1
+		local lhsSize = sys.sizes[math.floor(ltSize)]
+		local rhsSize = sys.sizes[math.ceil(ltSize)]
+		local size = lerpvSize*(rhsSize-lhsSize) + lhsSize
+		
+		local colorCount = #sys.colors / 4 -- each color has r,g,b,a
+		local ltColor = lifetimePart*(colorCount - 1) + 1
+		local lerpvColor = ltColor % 1
+		local lhsColor = math.floor(ltColor)
+		local rhsColor = math.ceil(ltColor)
+		local lhsColori = (lhsColor-1)*4 + 1
+		local rhsColori = (rhsColor-1)*4 + 1
+		
+		local clr = {}
+		for j = 1,4 do
+			local mi = sys.colors[lhsColori + j - 1]
+			local ma = sys.colors[rhsColori + j - 1]
+			clr[j] = lerpvColor*(ma-mi)+mi
+		end
+		
+		local oclr = {love.graphics.getColor()}
+		
+		love.graphics.setColor(clr)
+		love.graphics.draw(sys.texture, (p.x - ox) * sx + x, (p.y - oy) * sy + y, 0, size * sx, size * sy)
+		
+		love.graphics.setColor(oclr)
+	end
+end
+
+function love.graphics.newParticleSystem(tex, bufsize)
+	return setmetatable({
+		sizes = {1},
+		speed = {1,1},
+		spread = 0,
+		lifetime = {0,0},
+		area = {"normal",0,0,0,false},
+		svar = 0,
+		damping = {0,0},
+		bufsize = bufsize or 1000,
+		colors = {1,1,1,1},
+		blarticleblystem = "frfr no cap",
+		position = {0,0},
+		parts = {},
+		texture = tex
+	}, {
+		__index = function(t,k)
+			local val = rawget(psFunctions, k)
+			if val then
+				return val
+			end
+			error("Particle system doesn't yet support function " .. tostring(k))
+		end
+	})
+end
+
+local olddrawfunc = love.graphics.draw
+function love.graphics.draw(...)
+	local arg1 = select(1,...)
+	if type(arg1) == "table" and arg1.blarticleblystem then
+		local x,y,r,sx,sy,ox,oy,kx,ky = select(2,...)
+
+		renderPartSystem(arg1,x,y,r,sx,sy,ox,oy)
+
+		return
+	elseif type(arg1) == "table" and arg1.textobj then
+		local x,y,r,sx,sy,ox,oy,kx,ky = select(2,...)
+		love.graphics.setFont(arg1.font or love.graphics.getFont())
+		love.graphics.printf(arg1.txt, x, y, arg1.limit, arg1.align, r, sx, sy, ox, oy, kx, ky)
+	
+		return
+	end
+	
+	olddrawfunc(...)
+end
+
 layers = {[0]={},{}}
 initiallayers = {[0]={},{}}
 placeables = {}
